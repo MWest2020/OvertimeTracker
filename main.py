@@ -11,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
+import psutil
 
 def fetch_worklogs(account_id, start_date, end_date, tempo_token):
     headers = {
@@ -167,7 +168,14 @@ def create_excel_report(account_id, account_name, workdays, start_date, end_date
 
     return filename
 
+email_sent = False
+
 def send_email(subject, body, attachment_paths):
+    global email_sent
+    if email_sent:
+        print("Debug: Email already sent, skipping")
+        return False
+
     sender_email = os.getenv('GMAIL_USER')
     sender_password = os.getenv('GMAIL_PASSWORD')
     recipient_email = os.getenv('RECIPIENT_EMAIL')
@@ -197,6 +205,7 @@ def send_email(subject, body, attachment_paths):
             server.login(sender_email, sender_password)
             server.send_message(message)
         print(f"Email sent successfully with {len(attachment_paths)} attachments")
+        email_sent = True
         return True
     except Exception as e:
         print(f"Failed to send email: {str(e)}")
@@ -234,6 +243,7 @@ def main():
     else:
         accounts = get_all_accounts()
 
+    print("Debug: Starting report generation")
     generated_files = []
 
     for account_id, account_name in accounts.items():
@@ -247,21 +257,32 @@ def main():
         else:
             print(f"No worklogs found for {account_name} (Account ID: {account_id}).")
 
+    print(f"Debug: {len(generated_files)} reports generated")
+
     # Send email only once, after all reports have been generated
     if args.email and generated_files:
+        print("Debug: Preparing to send email")
         subject = f"Worklog Reports - {start_date.strftime('%Y-%m')}"
         body = f"Please find attached the worklog reports for all accounts from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}."
-        send_email(subject, body, generated_files)
-        print("Email sent with all generated reports.")
+        success = send_email(subject, body, generated_files)
+        if success:
+            print("Debug: Email sent successfully")
+        else:
+            print("Debug: Failed to send email")
+
+    print("Debug: Main function completed")
+
+def is_script_already_running():
+    current_process = psutil.Process(os.getpid())
+    for process in psutil.process_iter(['pid', 'name', 'cmdline']):
+        if process.info['name'] == current_process.name() and \
+           process.info['cmdline'] == current_process.cmdline() and \
+           process.info['pid'] != current_process.pid:
+            return True
+    return False
 
 if __name__ == "__main__":
-    main()
-
-if __name__ == "__main__":
-    main()
-
-if __name__ == "__main__":
-    main()
-
-if __name__ == "__main__":
-    main()
+    if is_script_already_running():
+        print("Another instance of this script is already running. Exiting.")
+    else:
+        main()
