@@ -6,6 +6,11 @@ import os
 import json
 import argparse
 import calendar
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
 
 def fetch_worklogs(account_id, start_date, end_date, tempo_token):
     headers = {
@@ -162,12 +167,48 @@ def create_excel_report(account_id, account_name, workdays, start_date, end_date
 
     return filename
 
+def send_email(subject, body, attachment_paths):
+    sender_email = os.getenv('GMAIL_USER')
+    sender_password = os.getenv('GMAIL_PASSWORD')
+    recipient_email = os.getenv('RECIPIENT_EMAIL')
+
+    message = MIMEMultipart()
+    message['From'] = sender_email
+    message['To'] = recipient_email
+    message['Subject'] = subject
+
+    message.attach(MIMEText(body, 'plain'))
+
+    for attachment_path in attachment_paths:
+        with open(attachment_path, 'rb') as attachment:
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(attachment.read())
+        
+        encoders.encode_base64(part)
+        part.add_header(
+            'Content-Disposition',
+            f'attachment; filename= {os.path.basename(attachment_path)}',
+        )
+
+        message.attach(part)
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(message)
+        print(f"Email sent successfully with {len(attachment_paths)} attachments")
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {str(e)}")
+        return False
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch Tempo worklogs for specific account(s).")
     parser.add_argument("account_id", nargs='?', help="The account ID to fetch worklogs for. If not provided, fetch for all accounts in account_info.json")
     parser.add_argument("--date", help="Specific date to fetch data for (YYYY-MM-DD)")
     parser.add_argument("--month", type=int, help="Month to fetch data for (1-12)")
     parser.add_argument("--year", type=int, help="Year to fetch data for")
+    parser.add_argument("--email", action="store_true", help="Send the report via email")
     args = parser.parse_args()
 
     load_dotenv()
@@ -179,24 +220,21 @@ def main():
 
     if args.date:
         start_date = end_date = datetime.strptime(args.date, '%Y-%m-%d').date()
-    elif args.month is None or args.year is None:
-        today = date.today()
-        year = today.year
-        month = today.month
-        start_date = date(year, month, 1)
-        _, last_day = calendar.monthrange(year, month)
-        end_date = date(year, month, last_day)
+    elif args.month and args.year:
+        start_date = date(args.year, args.month, 1)
+        _, last_day = calendar.monthrange(args.year, args.month)
+        end_date = date(args.year, args.month, last_day)
     else:
-        year = args.year
-        month = args.month
-        start_date = date(year, month, 1)
-        _, last_day = calendar.monthrange(year, month)
-        end_date = date(year, month, last_day)
+        today = date.today()
+        start_date = date(today.year, today.month, 1)
+        end_date = today
 
     if args.account_id:
         accounts = {args.account_id: get_account_name(args.account_id)}
     else:
         accounts = get_all_accounts()
+
+    generated_files = []
 
     for account_id, account_name in accounts.items():
         print(f"\nFetching work logs for {account_name} (Account ID: {account_id})...")
@@ -205,8 +243,25 @@ def main():
         if workdays:
             filename = create_excel_report(account_id, account_name, workdays, start_date, end_date)
             print(f"Excel report generated: {filename}")
+            generated_files.append(filename)
         else:
             print(f"No worklogs found for {account_name} (Account ID: {account_id}).")
+
+    # Send email only once, after all reports have been generated
+    if args.email and generated_files:
+        subject = f"Worklog Reports - {start_date.strftime('%Y-%m')}"
+        body = f"Please find attached the worklog reports for all accounts from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}."
+        send_email(subject, body, generated_files)
+        print("Email sent with all generated reports.")
+
+if __name__ == "__main__":
+    main()
+
+if __name__ == "__main__":
+    main()
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
